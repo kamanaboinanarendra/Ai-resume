@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # AI-Powered Resume Builder
 
 A full-stack, enterprise-grade web application that empowers users to create, customize, AI-optimize, and export professional resumes. Built with a React/Vite frontend, a FastAPI backend, PostgreSQL database persistence, Google Gemini AI integration using the official `google-genai` SDK, and pixel-perfect PDF generation.
@@ -252,3 +253,6 @@ All 9 test units and all 12 live E2E integration workflows pass with 100% succes
 ### 4. PDF Generation Failure
 - The PDF export uses ReportLab, which requires no external OS libraries or GTK/WebKit dependencies.
 - Ensure `reportlab` is installed in your Python environment: `pip show reportlab`.
+=======
+# Ai-resume
+>>>>>>> 0064ffce67bb6808b15ad039ca68d503776c92db
