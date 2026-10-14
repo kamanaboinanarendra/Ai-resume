@@ -1,43 +1,39 @@
 #!/bin/sh
 # Entrypoint for the integrated app image.
-#   1. Persist an auto-generated JWT secret when none was provided
-#      (so `docker compose up` with zero config keeps logins valid
-#       across restarts; set JWT_SECRET_KEY to override).
+#   1. Verify the mandatory environment variables are present:
+#         POSTGRES_URI    (full PostgreSQL URI)
+#         JWT_SECRET_KEY  (openssl rand -hex 32)
+#         GEMINI_API_KEY  (Google AI Studio)
 #   2. Wait for the database, create tables, apply migrations.
 #   3. Exec uvicorn (PID 1 via exec -> clean signal handling).
 set -eu
 
-SECRETS_DIR="${SECRETS_DIR:-/app/secrets}"
+# --- 1. Mandatory environment ---------------------------------------------
+missing=""
+# POSTGRES_URI is canonical; DATABASE_URL is accepted as a legacy alias.
+[ -z "${POSTGRES_URI:-}" ] && [ -z "${DATABASE_URL:-}" ] && missing="$missing POSTGRES_URI"
+[ -z "${JWT_SECRET_KEY:-}" ] && missing="$missing JWT_SECRET_KEY"
+[ -z "${GEMINI_API_KEY:-}" ] && missing="$missing GEMINI_API_KEY"
 
-# --- 1. JWT secret ------------------------------------------------------
-case "${JWT_SECRET_KEY:-}" in
-  ""|change-this-to-a-very-secure-random-secret-key-in-production-32bytes|change-me|changeme)
-    mkdir -p "$SECRETS_DIR" 2>/dev/null || true
-    SECRET_FILE="$SECRETS_DIR/jwt_secret"
-    if [ ! -s "$SECRET_FILE" ]; then
-      python -c "import secrets; print(secrets.token_hex(32))" > "$SECRET_FILE" 2>/dev/null \
-        || echo "ephemeral-$(date +%s)-$$" > "$SECRET_FILE"
-      chmod 600 "$SECRET_FILE" 2>/dev/null || true
-      echo "entrypoint: generated a JWT secret in $SECRET_FILE (set JWT_SECRET_KEY to use your own)."
-    fi
-    JWT_SECRET_KEY="$(cat "$SECRET_FILE")"
-    export JWT_SECRET_KEY
-    ;;
-esac
+if [ -n "$missing" ]; then
+  echo "================================================================" >&2
+  echo "  IMPORTANT: mandatory environment variables are missing:" >&2
+  for var in $missing; do echo "    - $var" >&2; done
+  echo "  Set them in your .env file (see .env.example) or with" >&2
+  echo "  'docker run -e ...' / compose 'environment:', then restart." >&2
+  echo "================================================================" >&2
+  exit 1
+fi
 
 # --- 2. Database ---------------------------------------------------------
 python - <<'PY'
 import os, sys, time
 
-url = os.environ.get("DATABASE_URL", "")
-if not url:
-    # Assemble from POSTGRES_* components exactly like the app does.
-    try:
-        sys.path.insert(0, os.getcwd())
-        from app.core.config import settings
-        url = settings.DATABASE_URL
-    except Exception:
-        sys.exit(0)
+sys.path.insert(0, os.getcwd())
+# Resolves POSTGRES_URI / DATABASE_URL and normalises the URI.
+from app.core.config import settings
+
+url = settings.DATABASE_URL
 
 if not url.startswith("sqlite"):
     from sqlalchemy import create_engine, text
@@ -57,12 +53,11 @@ if not url.startswith("sqlite"):
     else:
         print(f"entrypoint: WARNING database not reachable after 60s: {last}",
               file=sys.stderr, flush=True)
-        sys.exit(0)  # app will keep warning; don't crash-loop forever
+        sys.exit(0)  # app will surface the error; don't crash-loop forever
 
 # Create tables first (Alembic's initial revision is a no-op and its
 # follow-up inspects existing tables), then apply migrations.
 try:
-    sys.path.insert(0, os.getcwd())
     from app.db.session import engine, Base
     import app.models  # noqa: F401  (register models)
     Base.metadata.create_all(bind=engine)

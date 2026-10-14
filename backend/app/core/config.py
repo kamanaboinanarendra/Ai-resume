@@ -1,32 +1,28 @@
 """
 Central application settings.
 
-Environment philosophy (see root ``.env.example``):
+MANDATORY environment variables -- the app refuses to start without
+all three (see root ``.env.example``):
 
-* Only a handful of variables are *important* for a real deployment
-  (an AI key if you want AI features, and ``JWT_SECRET_KEY`` /
-  ``POSTGRES_PASSWORD`` if you want stable logins / a non-default DB
-  password).  Everything else is OPTIONAL.
-* Every optional variable is auto-detected or falls back to a sensible
-  default, e.g.:
+    POSTGRES_URI    Full PostgreSQL connection URI, e.g.
+                    postgresql://user:password@host:5432/ai_resume_builder
+                    (``postgres://`` and ``postgresql+psycopg://`` are
+                    also accepted and normalised automatically.
+                    ``DATABASE_URL`` is accepted as a legacy alias.)
+    JWT_SECRET_KEY  Secret used to sign login tokens.
+                    Generate one with:  openssl rand -hex 32
+    GEMINI_API_KEY  Google Gemini API key (Google AI Studio).
 
-  - ``DATABASE_URL`` is assembled from ``POSTGRES_HOST/PORT/DB/USER/
-    PASSWORD`` (set automatically by docker-compose) when not given.
-  - ``DOMAIN`` / ``PUBLIC_URL`` derive the public origin, CORS list and
-    the Secure-cookie flag when not given (defaults: same-origin,
-    which is always correct because the frontend calls relative
-    ``/api`` URLs and is served by this very backend / nginx).
-  - ``JWT_SECRET_KEY`` left unset -> an ephemeral per-boot secret is
-    generated and a loud warning is printed (the Docker entrypoint
-    persists a generated secret to a volume so logins survive
-    restarts even with zero configuration).
+Every other variable is OPTIONAL and auto-detected or falls back to a
+sensible default, e.g. ``DOMAIN`` / ``PUBLIC_URL`` derive the public
+origin, CORS list and the Secure-cookie flag, which is always correct
+when unset because the frontend calls relative ``/api`` URLs and is
+served by this very backend / nginx.
 """
 import os
-import secrets
 import sys
 from pathlib import Path
 from typing import List, Optional
-from urllib.parse import quote_plus
 
 from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -53,12 +49,17 @@ FOUND_ENV_FILES = [str(p) for p in ENV_CANDIDATES if p.is_file()]
 for env_path in FOUND_ENV_FILES:
     load_dotenv(dotenv_path=env_path, override=False)
 
+# Values that must never be used as a real JWT secret (unset, docs
+# placeholders, and the secret that used to be hardcoded in this repo).
 _INSECURE_JWT_SECRETS = {
     "",
     "change-this-to-a-very-secure-random-secret-key-in-production-32bytes",
     "change-me",
     "changeme",
+    "b91a78fa8115663738092284cf72c81d3467e4125b290df621a5a04a6e872c65",
 }
+
+MANDATORY_ENV_VARS = ("POSTGRES_URI", "JWT_SECRET_KEY", "GEMINI_API_KEY")
 
 _LOCAL_ORIGINS = [
     "http://localhost:5173",
@@ -76,11 +77,40 @@ def _split_origins(raw: str) -> List[str]:
     return [o.strip().rstrip("/") for o in (raw or "").split(",") if o.strip()]
 
 
+def normalise_postgres_uri(uri: str) -> str:
+    """Accept postgres:// / postgresql:// and return a SQLAlchemy URL."""
+    uri = (uri or "").strip()
+    if uri.startswith("postgres://"):
+        return "postgresql+psycopg://" + uri[len("postgres://"):]
+    if uri.startswith("postgresql://"):
+        return "postgresql+psycopg://" + uri[len("postgresql://"):]
+    return uri
+
+
 class Settings(BaseSettings):
     PROJECT_NAME: str = "AI-Powered Resume Builder"
     API_V1_STR: str = "/api"
 
-    # -- Public origin (OPTIONAL, auto-detected) --------------------------
+    # -- MANDATORY ---------------------------------------------------------
+    # Full PostgreSQL URI. DATABASE_URL is a legacy alias (POSTGRES_URI wins).
+    POSTGRES_URI: str = ""
+    DATABASE_URL: str = ""
+    # Signs login tokens. Generate: openssl rand -hex 32
+    JWT_SECRET_KEY: str = ""
+    # Google Gemini API key (Google AI Studio).
+    GEMINI_API_KEY: str = ""
+
+    JWT_ALGORITHM: str = "HS256"
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 1440  # 24 hours
+
+    # -- OPTIONAL AI settings ------------------------------------------------
+    GEMINI_MODEL: str = "gemini-3.8-flash"
+    # Optional alternative provider; GEMINI_API_KEY above is the
+    # mandatory/default path.
+    OPENROUTER_API_KEY: str = ""
+    OPENROUTER_MODEL: str = "openrouter/free"
+
+    # -- OPTIONAL public origin (auto-detected) ------------------------------
     # Set DOMAIN=resumes.example.com   (scheme optional)  OR
     #     PUBLIC_URL=https://resumes.example.com          OR
     # leave both empty: same-origin deployment (the default under
@@ -88,37 +118,9 @@ class Settings(BaseSettings):
     # domain, IP or localhost without rebuilding the frontend.
     DOMAIN: str = ""
     PUBLIC_URL: str = ""
-    # Explicit overrides (rarely needed):
     FRONTEND_URL: str = ""
     CORS_ORIGINS: str = ""  # comma-separated, e.g. "https://a.com,https://b.com"
     ALLOWED_ORIGINS: List[str] = []
-
-    # -- Database (OPTIONAL, auto-assembled) -------------------------------
-    # Either a full DATABASE_URL, or the POSTGRES_* components below.
-    DATABASE_URL: str = ""
-    POSTGRES_HOST: str = ""
-    POSTGRES_PORT: int = 5432
-    POSTGRES_DB: str = "ai_resume_builder"
-    POSTGRES_USER: str = "postgres"
-    POSTGRES_PASSWORD: str = "postgres"
-    # Generic aliases accepted as a convenience:
-    DB_HOST: str = ""
-    DB_PORT: Optional[int] = None
-
-    # -- JWT Authentication --------------------------------------------------
-    # IMPORTANT for production (stable logins across restarts/replicas);
-    # auto-generated when left unset -- see module docstring.
-    JWT_SECRET_KEY: str = ""
-    JWT_ALGORITHM: str = "HS256"
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = 1440  # 24 hours
-    JWT_SECRET_IS_EPHEMERAL: bool = False
-
-    # -- AI Assistance (Supports Google Gemini and OpenRouter) -------------
-    # IMPORTANT only if you want AI features; the app runs fully without it.
-    GEMINI_API_KEY: str = ""
-    GEMINI_MODEL: str = "gemini-3.8-flash"
-    OPENROUTER_API_KEY: str = ""
-    OPENROUTER_MODEL: str = "openrouter/free"
 
     # Email / SMTP Delivery Service (OPTIONAL; password-reset mail only)
     SMTP_HOST: str = ""
@@ -147,7 +149,39 @@ class Settings(BaseSettings):
     # ------------------------------------------------------------------
     @model_validator(mode="after")
     def _resolve_derived_settings(self) -> "Settings":
-        # --- public URL ------------------------------------------------
+        # --- mandatory variables: fail fast, all at once -----------------
+        missing = []
+
+        raw_uri = (self.POSTGRES_URI or self.DATABASE_URL or "").strip()
+        if not raw_uri:
+            missing.append(
+                "POSTGRES_URI  (full PostgreSQL URI, e.g. "
+                "postgresql://user:password@host:5432/ai_resume_builder)")
+        if (self.JWT_SECRET_KEY or "").strip() in _INSECURE_JWT_SECRETS:
+            missing.append(
+                "JWT_SECRET_KEY  (generate one with: openssl rand -hex 32)")
+        if not (self.GEMINI_API_KEY or "").strip():
+            missing.append(
+                "GEMINI_API_KEY  (from Google AI Studio: "
+                "https://aistudio.google.com)")
+
+        if missing:
+            raise ValueError(
+                "\n"
+                "================================================================\n"
+                "  IMPORTANT: mandatory environment variables are missing:\n"
+                + "".join(f"    - {item}\n" for item in missing)
+                + "  Set them in your .env file (see .env.example) or in the\n"
+                "  environment of the Docker container, then restart.\n"
+                "================================================================\n"
+            )
+
+        # --- database URI -------------------------------------------------
+        self.POSTGRES_URI = normalise_postgres_uri(raw_uri)
+        # Kept in sync for the existing SQLAlchemy/Alembic code paths.
+        self.DATABASE_URL = self.POSTGRES_URI
+
+        # --- public URL -----------------------------------------------------
         public = (self.PUBLIC_URL or "").strip().rstrip("/")
         domain = (self.DOMAIN or "").strip().rstrip("/")
         if not public and domain:
@@ -160,7 +194,7 @@ class Settings(BaseSettings):
             self.FRONTEND_URL = public or "http://localhost:5173"
         self.FRONTEND_URL = self.FRONTEND_URL.rstrip("/")
 
-        # --- CORS --------------------------------------------------------
+        # --- CORS -------------------------------------------------------------
         origins = set(_LOCAL_ORIGINS)
         origins.add(self.FRONTEND_URL)
         if public:
@@ -171,11 +205,9 @@ class Settings(BaseSettings):
             origins.add(f"http://{bare}")
         origins.update(self.ALLOWED_ORIGINS)
         origins.update(_split_origins(self.CORS_ORIGINS))
-        origins.update(_split_origins(os.environ.get("ALLOWED_ORIGINS", "")
-                                       if not self.ALLOWED_ORIGINS else ""))
         self.ALLOWED_ORIGINS = sorted(o for o in origins if o)
 
-        # --- cookie security ---------------------------------------------
+        # --- cookie security ----------------------------------------------------
         if self.COOKIE_SECURE is None:
             self.COOKIE_SECURE = public.startswith("https://")
 
@@ -187,40 +219,6 @@ class Settings(BaseSettings):
         if not self.SMTP_FROM:
             self.SMTP_FROM = self.EMAIL_FROM
 
-        # --- database URL ---------------------------------------------------
-        if not self.DATABASE_URL:
-            host = self.POSTGRES_HOST or self.DB_HOST or os.environ.get("DB_HOST", "")
-            if host:
-                port = self.DB_PORT or self.POSTGRES_PORT or 5432
-                self.DATABASE_URL = (
-                    f"postgresql+psycopg://{quote_plus(self.POSTGRES_USER)}:"
-                    f"{quote_plus(self.POSTGRES_PASSWORD)}@{host}:{port}/"
-                    f"{quote_plus(self.POSTGRES_DB)}"
-                )
-            else:
-                # Local (non-Docker) developer default -- unchanged behaviour.
-                self.DATABASE_URL = (
-                    "postgresql+psycopg://postgres:postgres"
-                    "@localhost:5433/ai_resume_builder"
-                )
-
-        # --- JWT secret ------------------------------------------------------
-        if (self.JWT_SECRET_KEY or "").strip() in _INSECURE_JWT_SECRETS:
-            self.JWT_SECRET_KEY = secrets.token_hex(32)
-            self.JWT_SECRET_IS_EPHEMERAL = True
-            print(
-                "\n"
-                "================================================================\n"
-                "  IMPORTANT: JWT_SECRET_KEY is not set.\n"
-                "  A random secret was generated for this boot only, so all\n"
-                "  logins will be invalidated when the server restarts.\n"
-                "  For production set JWT_SECRET_KEY in your .env, e.g.:\n"
-                "      JWT_SECRET_KEY=$(openssl rand -hex 32)\n"
-                "  (Under docker-compose a generated secret is persisted\n"
-                "   automatically in the `app_secrets` volume instead.)\n"
-                "================================================================\n",
-                file=sys.stderr,
-            )
         return self
 
     @property

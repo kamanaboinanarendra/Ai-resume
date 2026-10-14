@@ -157,7 +157,7 @@ def forgot_password(req: ForgotPasswordRequest, db: Session = Depends(get_db)):
         db.commit()
         logger.warning(
             "Password reset aborted: SMTP delivery service is not configured. "
-            "Missing settings: %s. Configure them in backend/.env.",
+            "Missing settings: %s. Configure them in .env.",
             email_service.get_missing_config()
         )
         raise HTTPException(

@@ -1,7 +1,7 @@
 # ==========================================================================
 # Whole deployment from the repository root:
 #
-#     cp .env.example .env        # optional -- zero config also works
+#     cp .env.example .env        # fill in the 3 mandatory variables
 #     docker compose up --build   # -> http://localhost  (nginx)
 #
 # Traffic flow:
@@ -9,60 +9,34 @@
 #                   |-- /api/*          --> backend:8000  (FastAPI)
 #                   `-- /, /login, ...  --> backend:8000  (integrated
 #                                                      frontend build)
-#     backend --> db (PostgreSQL, internal network only)
+#     backend --> PostgreSQL at POSTGRES_URI (managed/external or local;
+#                 there is deliberately no bundled DB container and no
+#                 raw DB password anywhere -- only the full URI)
 #
-# Only nginx is published by default. Every value below has a sensible
-# default; see .env.example for the few IMPORTANT variables.
+# Only nginx is published by default. The three mandatory variables
+# (POSTGRES_URI, JWT_SECRET_KEY, GEMINI_API_KEY) use compose's `:?`
+# syntax: `docker compose up` fails immediately with a clear message
+# if any of them is missing. Everything else is optional/defaulted.
 # ==========================================================================
 
 services:
-  db:
-    image: postgres:16-alpine
-    restart: unless-stopped
-    environment:
-      POSTGRES_DB: ${POSTGRES_DB:-ai_resume_builder}
-      POSTGRES_USER: ${POSTGRES_USER:-postgres}
-      # IMPORTANT for production: set POSTGRES_PASSWORD in .env.
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
-    volumes:
-      - pgdata:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER:-postgres} -d $${POSTGRES_DB:-ai_resume_builder}"]
-      interval: 5s
-      timeout: 5s
-      retries: 12
-    # Not published: the DB is reachable only inside the compose network.
-    # (For local debugging add:  ports: ["127.0.0.1:5433:5432"])
-
   backend:
     build:
       context: .
       dockerfile: Dockerfile
     restart: unless-stopped
-    depends_on:
-      db:
-        condition: service_healthy
     environment:
-      # ---- database: assembled automatically by the backend from the
-      # POSTGRES_* components (passwords are URL-encoded safely).
-      # Set DATABASE_URL instead to use an external/managed database.
-      DATABASE_URL: ${DATABASE_URL:-}
-      POSTGRES_HOST: db
-      POSTGRES_PORT: 5432
-      POSTGRES_DB: ${POSTGRES_DB:-ai_resume_builder}
-      POSTGRES_USER: ${POSTGRES_USER:-postgres}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
-      # ---- IMPORTANT in production (see .env.example) --------------------
-      # Left empty -> entrypoint generates one and persists it in the
-      # app_secrets volume so logins survive restarts.
-      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-}
-      # IMPORTANT only for AI features (either key works):
-      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
-      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      # ---- MANDATORY (compose refuses to start without them) -------------
+      POSTGRES_URI: "${POSTGRES_URI:?POSTGRES_URI is mandatory - full PostgreSQL URI, e.g. postgresql://user:password@host:5432/ai_resume_builder (see .env.example)}"
+      JWT_SECRET_KEY: "${JWT_SECRET_KEY:?JWT_SECRET_KEY is mandatory - generate one with openssl rand -hex 32 (see .env.example)}"
+      GEMINI_API_KEY: "${GEMINI_API_KEY:?GEMINI_API_KEY is mandatory - get one from Google AI Studio (see .env.example)}"
       # ---- OPTIONAL, auto-detected / sensible defaults --------------------
+      # Legacy alias for POSTGRES_URI (POSTGRES_URI wins if both are set):
+      DATABASE_URL: ${DATABASE_URL:-}
       DOMAIN: ${DOMAIN:-}
       PUBLIC_URL: ${PUBLIC_URL:-}
       GEMINI_MODEL: ${GEMINI_MODEL:-gemini-3.8-flash}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
       OPENROUTER_MODEL: ${OPENROUTER_MODEL:-openrouter/free}
       ACCESS_TOKEN_EXPIRE_MINUTES: ${ACCESS_TOKEN_EXPIRE_MINUTES:-1440}
       CORS_ORIGINS: ${CORS_ORIGINS:-}
@@ -75,8 +49,10 @@ services:
       SMTP_USE_TLS: ${SMTP_USE_TLS:-true}
       SMTP_USE_SSL: ${SMTP_USE_SSL:-false}
       PORT: 8000
-    volumes:
-      - app_secrets:/app/secrets
+    # Lets POSTGRES_URI point at a Postgres running on the host
+    # (postgresql://user:pass@host.docker.internal:5432/db).
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     expose:
       - "8000"
     healthcheck:
@@ -106,7 +82,3 @@ services:
     volumes:
       # Rendered by the nginx image's envsubst entrypoint at boot.
       - ./nginx/nginx.conf.template:/etc/nginx/templates/default.conf.template:ro
-
-volumes:
-  pgdata:
-  app_secrets:

@@ -37,8 +37,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
     PORT=8000 \
-    FRONTEND_DIST_DIR=/app/frontend_dist \
-    SECRETS_DIR=/app/secrets
+    FRONTEND_DIST_DIR=/app/frontend_dist
 
 WORKDIR /app
 
@@ -53,7 +52,6 @@ COPY backend/ ./
 COPY --from=frontend-build /build/frontend/dist ./frontend_dist
 
 RUN chmod +x docker-entrypoint.sh \
-    && mkdir -p /app/secrets \
     && addgroup --system app && adduser --system --ingroup app app \
     && chown -R app:app /app
 USER app

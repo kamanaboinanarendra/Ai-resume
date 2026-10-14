@@ -166,12 +166,12 @@ class EmailService:
             missing = self.get_missing_config()
             logger.warning(
                 "Password reset requested, but SMTP credentials are not configured. "
-                "Missing settings: %s. Configure them in backend/.env.",
+                "Missing settings: %s. Configure them in .env.",
                 ", ".join(missing)
             )
             raise EmailNotConfiguredError(
                 f"Email delivery service is not configured on the server. "
-                f"Missing settings: {', '.join(missing)} in backend/.env."
+                f"Missing settings: {', '.join(missing)} in .env."
             )
 
         subject = "AI Resume Builder - Your Password Reset Verification Code"
