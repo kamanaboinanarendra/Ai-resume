@@ -1,0 +1,42 @@
+.git
+.gitignore
+.github
+
+# Secrets / local config -- never bake into an image
+.env
+**/.env
+!.env.example
+!backend/.env.example
+
+# Python
+**/__pycache__
+**/*.py[cod]
+backend/.venv
+.venv
+.pytest_cache
+
+# Node (rebuilt inside the image)
+frontend/node_modules
+frontend/dist
+**/node_modules
+
+# Local runtime data / archives
+.pgdata
+*.zip
+*.sqlite
+*.db
+
+# Editors / OS
+.vscode
+.idea
+.DS_Store
+Thumbs.db
+
+# Not needed at runtime
+PROJECT_STATUS.md
+TODO.md
+*.bat
+*.ps1
+backend/tests
+backend/test_*.py
+test_chat_req.py

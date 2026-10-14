@@ -55,7 +55,7 @@ class GeminiService:
         key = (settings.GEMINI_API_KEY or os.environ.get("GEMINI_API_KEY", "")).strip()
         if not key:
             raise GeminiNotConfiguredError(
-                "Gemini API key is not configured on the server. Please set GEMINI_API_KEY in backend/.env to enable AI assistance."
+                "Gemini API key is not configured on the server. Please set GEMINI_API_KEY in .env to enable AI assistance."
             )
         if self._gemini_client is None:
             self._gemini_client = genai.Client(api_key=key)
@@ -99,7 +99,7 @@ class GeminiService:
         headers = {
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",
-            "HTTP-Referer": "http://localhost:5173",
+            "HTTP-Referer": settings.PUBLIC_URL or settings.FRONTEND_URL,
             "X-Title": "AI Resume Builder"
         }
 
@@ -206,7 +206,7 @@ class GeminiService:
             )
         else:
             raise GeminiNotConfiguredError(
-                "AI service is not configured. Please set GEMINI_API_KEY (Google AI Studio) or OPENROUTER_API_KEY in backend/.env."
+                "AI service is not configured. Please set GEMINI_API_KEY (Google AI Studio) or OPENROUTER_API_KEY in .env."
             )
 
     async def generate_json(self, prompt: str) -> Dict[str, Any]:

@@ -1,7 +1,11 @@
 import axios from 'axios';
 
+// Relative "/api" by default: the same origin that serves this
+// frontend also serves the backend (integrated backend / nginx),
+// so the app works on any domain without a rebuild. Override with
+// VITE_API_BASE_URL only for split deployments.
 const api = axios.create({
-  baseURL: '/api',
+  baseURL: import.meta.env.VITE_API_BASE_URL || '/api',
   withCredentials: true,
   headers: {
     'Content-Type': 'application/json',

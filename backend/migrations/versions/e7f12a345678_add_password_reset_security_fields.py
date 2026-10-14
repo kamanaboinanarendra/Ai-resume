@@ -15,9 +15,13 @@ branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
 def upgrade() -> None:
-    # Safely add columns if not already added
+    # Safely add columns if not already added. On a fresh database the
+    # table does not exist yet (the initial revision creates the schema
+    # via the app's create_all), so there is nothing to alter.
     bind = op.get_bind()
     inspector = sa.inspect(bind)
+    if 'password_reset_codes' not in inspector.get_table_names():
+        return
     columns = [col['name'] for col in inspector.get_columns('password_reset_codes')]
 
     if 'code_hash' not in columns:

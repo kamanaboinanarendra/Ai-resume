@@ -76,7 +76,7 @@ async def chat_with_assistant(
     except GeminiNotConfiguredError as e:
         reply_text = (
             "⚠️ The AI Assistant is not currently configured on the server.\n\n"
-            "To activate live AI responses, add your `GEMINI_API_KEY` (from Google AI Studio) or `OPENROUTER_API_KEY` to `backend/.env`.\n"
+            "To activate live AI responses, add your `GEMINI_API_KEY` (from Google AI Studio) or `OPENROUTER_API_KEY` to `.env`.\n"
             "In the meantime, all resume builder, template, autosave, and PDF features are fully operational!"
         )
         suggestion_text = None

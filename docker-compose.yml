@@ -1,0 +1,84 @@
+# ==========================================================================
+# Whole deployment from the repository root:
+#
+#     cp .env.example .env        # fill in the 3 mandatory variables
+#     docker compose up --build   # -> http://localhost  (nginx)
+#
+# Traffic flow:
+#     browser --> nginx (:${HTTP_PORT:-80})
+#                   |-- /api/*          --> backend:8000  (FastAPI)
+#                   `-- /, /login, ...  --> backend:8000  (integrated
+#                                                      frontend build)
+#     backend --> PostgreSQL at POSTGRES_URI (managed/external or local;
+#                 there is deliberately no bundled DB container and no
+#                 raw DB password anywhere -- only the full URI)
+#
+# Only nginx is published by default. The three mandatory variables
+# (POSTGRES_URI, JWT_SECRET_KEY, GEMINI_API_KEY) use compose's `:?`
+# syntax: `docker compose up` fails immediately with a clear message
+# if any of them is missing. Everything else is optional/defaulted.
+# ==========================================================================
+
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      # ---- MANDATORY (compose refuses to start without them) -------------
+      POSTGRES_URI: "${POSTGRES_URI:?POSTGRES_URI is mandatory - full PostgreSQL URI, e.g. postgresql://user:password@host:5432/ai_resume_builder (see .env.example)}"
+      JWT_SECRET_KEY: "${JWT_SECRET_KEY:?JWT_SECRET_KEY is mandatory - generate one with openssl rand -hex 32 (see .env.example)}"
+      GEMINI_API_KEY: "${GEMINI_API_KEY:?GEMINI_API_KEY is mandatory - get one from Google AI Studio (see .env.example)}"
+      # ---- OPTIONAL, auto-detected / sensible defaults --------------------
+      # Legacy alias for POSTGRES_URI (POSTGRES_URI wins if both are set):
+      DATABASE_URL: ${DATABASE_URL:-}
+      DOMAIN: ${DOMAIN:-}
+      PUBLIC_URL: ${PUBLIC_URL:-}
+      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-3.8-flash}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      OPENROUTER_MODEL: ${OPENROUTER_MODEL:-openrouter/free}
+      ACCESS_TOKEN_EXPIRE_MINUTES: ${ACCESS_TOKEN_EXPIRE_MINUTES:-1440}
+      CORS_ORIGINS: ${CORS_ORIGINS:-}
+      # OPTIONAL, only for password-reset e-mail:
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      EMAIL_FROM: ${EMAIL_FROM:-}
+      SMTP_USE_TLS: ${SMTP_USE_TLS:-true}
+      SMTP_USE_SSL: ${SMTP_USE_SSL:-false}
+      PORT: 8000
+    # Lets POSTGRES_URI point at a Postgres running on the host
+    # (postgresql://user:pass@host.docker.internal:5432/db).
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    expose:
+      - "8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=4)"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    # Backend is intentionally NOT published: nginx is the entrypoint.
+    # To reach the integrated app directly (debugging), uncomment:
+    # ports: ["127.0.0.1:8000:8000"]
+
+  nginx:
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+    environment:
+      # Auto: "_" = catch-all server_name on any domain/IP. Set DOMAIN
+      # in .env to pin a hostname; TLS is terminated here or upstream
+      # (see the HTTPS note in nginx/nginx.conf.template).
+      NGINX_DOMAIN: ${DOMAIN:-_}
+    ports:
+      - "${HTTP_PORT:-80}:80"
+      # - "${HTTPS_PORT:-443}:443"   # + mount certs, see nginx template
+    volumes:
+      # Rendered by the nginx image's envsubst entrypoint at boot.
+      - ./nginx/nginx.conf.template:/etc/nginx/templates/default.conf.template:ro
