@@ -99,7 +99,7 @@ class GeminiService:
         headers = {
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",
-            "HTTP-Referer": "http://localhost:5173",
+            "HTTP-Referer": settings.PUBLIC_URL or settings.FRONTEND_URL,
             "X-Title": "AI Resume Builder"
         }
 

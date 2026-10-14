@@ -53,7 +53,7 @@ def register(user_in: UserCreate, response: Response, db: Session = Depends(get_
         httponly=True,
         max_age=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
         samesite="lax",
-        secure=False # Set to True in production with HTTPS
+        secure=bool(settings.COOKIE_SECURE)  # auto: True iff https public URL
     )
 
     return Token(
@@ -82,7 +82,7 @@ def login(login_data: UserLogin, response: Response, db: Session = Depends(get_d
         httponly=True,
         max_age=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
         samesite="lax",
-        secure=False
+        secure=bool(settings.COOKIE_SECURE)  # auto: True iff https public URL
     )
 
     return Token(

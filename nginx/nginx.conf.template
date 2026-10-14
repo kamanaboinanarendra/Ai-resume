@@ -1,0 +1,83 @@
+# nginx reverse proxy for the AI Resume Builder.
+#
+# Rendered at container start by the official nginx image
+# (envsubst on /etc/nginx/templates). Only ${NGINX_DOMAIN} is
+# substituted -- auto-detected: "_" (catch-all) when DOMAIN is unset,
+# so the app works on localhost, a bare IP, or any hostname with
+# zero configuration.
+#
+# Both kinds of traffic go to the single integrated backend image:
+#   /api/*            -> FastAPI backend
+#   /, /login, /assets/*, every other frontend path
+#                     -> the frontend build served by that same backend
+#
+# HTTPS: terminate TLS here (mount certs + listen 443 ssl -- see
+# docker-compose.yml) or in front of this container (cloud LB,
+# Caddy, Traefik, ...). The app auto-detects https via
+# X-Forwarded-Proto for Secure cookies.
+
+upstream ai_resume_backend {
+    server backend:8000;
+    keepalive 32;
+}
+
+server {
+    listen 80;
+    server_name ${NGINX_DOMAIN};
+
+    # Resume uploads / PDF traffic.
+    client_max_body_size 25m;
+
+    gzip on;
+    gzip_types text/plain text/css application/json application/javascript
+               text/xml application/xml image/svg+xml;
+    gzip_min_length 1024;
+
+    add_header X-Content-Type-Options nosniff always;
+    add_header X-Frame-Options SAMEORIGIN always;
+    add_header Referrer-Policy strict-origin-when-cross-origin always;
+
+    # Liveness probe that does not depend on the backend.
+    location = /healthz {
+        access_log off;
+        add_header Content-Type text/plain;
+        return 200 "ok\n";
+    }
+
+    # ---- Backend: everything under /api --------------------------------
+    location /api/ {
+        proxy_pass http://ai_resume_backend;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Connection "";
+        # AI chat / PDF generation can take a while.
+        proxy_connect_timeout 10s;
+        proxy_read_timeout 180s;
+        proxy_send_timeout 180s;
+    }
+
+    # ---- Frontend: hashed static assets, cached hard --------------------
+    location /assets/ {
+        proxy_pass http://ai_resume_backend;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Connection "";
+        expires 1y;
+        add_header Cache-Control "public, immutable";
+    }
+
+    # ---- Frontend: SPA shell + all client-side routes ------------------
+    location / {
+        proxy_pass http://ai_resume_backend;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Connection "";
+    }
+}

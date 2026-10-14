@@ -1,0 +1,112 @@
+# ==========================================================================
+# Whole deployment from the repository root:
+#
+#     cp .env.example .env        # optional -- zero config also works
+#     docker compose up --build   # -> http://localhost  (nginx)
+#
+# Traffic flow:
+#     browser --> nginx (:${HTTP_PORT:-80})
+#                   |-- /api/*          --> backend:8000  (FastAPI)
+#                   `-- /, /login, ...  --> backend:8000  (integrated
+#                                                      frontend build)
+#     backend --> db (PostgreSQL, internal network only)
+#
+# Only nginx is published by default. Every value below has a sensible
+# default; see .env.example for the few IMPORTANT variables.
+# ==========================================================================
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-ai_resume_builder}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      # IMPORTANT for production: set POSTGRES_PASSWORD in .env.
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER:-postgres} -d $${POSTGRES_DB:-ai_resume_builder}"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    # Not published: the DB is reachable only inside the compose network.
+    # (For local debugging add:  ports: ["127.0.0.1:5433:5432"])
+
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      # ---- database: assembled automatically by the backend from the
+      # POSTGRES_* components (passwords are URL-encoded safely).
+      # Set DATABASE_URL instead to use an external/managed database.
+      DATABASE_URL: ${DATABASE_URL:-}
+      POSTGRES_HOST: db
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: ${POSTGRES_DB:-ai_resume_builder}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      # ---- IMPORTANT in production (see .env.example) --------------------
+      # Left empty -> entrypoint generates one and persists it in the
+      # app_secrets volume so logins survive restarts.
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-}
+      # IMPORTANT only for AI features (either key works):
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      # ---- OPTIONAL, auto-detected / sensible defaults --------------------
+      DOMAIN: ${DOMAIN:-}
+      PUBLIC_URL: ${PUBLIC_URL:-}
+      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-3.8-flash}
+      OPENROUTER_MODEL: ${OPENROUTER_MODEL:-openrouter/free}
+      ACCESS_TOKEN_EXPIRE_MINUTES: ${ACCESS_TOKEN_EXPIRE_MINUTES:-1440}
+      CORS_ORIGINS: ${CORS_ORIGINS:-}
+      # OPTIONAL, only for password-reset e-mail:
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      EMAIL_FROM: ${EMAIL_FROM:-}
+      SMTP_USE_TLS: ${SMTP_USE_TLS:-true}
+      SMTP_USE_SSL: ${SMTP_USE_SSL:-false}
+      PORT: 8000
+    volumes:
+      - app_secrets:/app/secrets
+    expose:
+      - "8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=4)"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    # Backend is intentionally NOT published: nginx is the entrypoint.
+    # To reach the integrated app directly (debugging), uncomment:
+    # ports: ["127.0.0.1:8000:8000"]
+
+  nginx:
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+    environment:
+      # Auto: "_" = catch-all server_name on any domain/IP. Set DOMAIN
+      # in .env to pin a hostname; TLS is terminated here or upstream
+      # (see the HTTPS note in nginx/nginx.conf.template).
+      NGINX_DOMAIN: ${DOMAIN:-_}
+    ports:
+      - "${HTTP_PORT:-80}:80"
+      # - "${HTTPS_PORT:-443}:443"   # + mount certs, see nginx template
+    volumes:
+      # Rendered by the nginx image's envsubst entrypoint at boot.
+      - ./nginx/nginx.conf.template:/etc/nginx/templates/default.conf.template:ro
+
+volumes:
+  pgdata:
+  app_secrets:

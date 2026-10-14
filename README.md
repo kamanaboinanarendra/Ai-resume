@@ -1,7 +1,52 @@
-<<<<<<< HEAD
 # AI-Powered Resume Builder
 
 A full-stack, enterprise-grade web application that empowers users to create, customize, AI-optimize, and export professional resumes. Built with a React/Vite frontend, a FastAPI backend, PostgreSQL database persistence, Google Gemini AI integration using the official `google-genai` SDK, and pixel-perfect PDF generation.
+
+---
+
+## 🚀 Deploy with Docker (recommended — one command from the repo root)
+
+The frontend is **built into the backend image**: the FastAPI backend
+serves the API under `/api/*` and the React app on every other path,
+and **nginx** (the only published container) proxies both frontend
+paths and `/api` to it.
+
+```text
+browser ──► nginx (:80) ──┬─ /api/*          ─► backend:8000 (FastAPI)
+                          └─ /, /login, ...  ─► backend:8000 (integrated frontend)
+backend ──► PostgreSQL (internal network only)
+```
+
+```bash
+cp .env.example .env      # optional — zero config also works
+docker compose up --build
+# open http://localhost
+```
+
+Single image without compose (needs your own PostgreSQL):
+
+```bash
+docker build -t ai-resume .
+docker run -p 8000:8000 -e DATABASE_URL=postgresql+psycopg://user:pass@host:5432/ai_resume_builder ai-resume
+# open http://localhost:8000  (API docs: /api/docs)
+```
+
+**Environment variables — only these are important** (everything else
+in `.env.example` is optional, auto-detected, or defaulted — domain
+included: leave `DOMAIN` empty and the app works on any host):
+
+| Variable | Why it matters |
+|---|---|
+| `JWT_SECRET_KEY` | 🔴 Production login stability. Empty = auto-generated & persisted in the `app_secrets` volume. `openssl rand -hex 32` |
+| `POSTGRES_PASSWORD` | 🔴 Password of the bundled DB (default `postgres`). |
+| `GEMINI_API_KEY` **or** `OPENROUTER_API_KEY` | 🟡 Only for AI features; the rest of the app works fully without one. |
+
+Optional highlights: `DOMAIN`/`PUBLIC_URL` (pin a hostname / force
+Secure cookies), `HTTP_PORT` (default `80`), `DATABASE_URL` (external
+DB — then the `db` service can be removed), SMTP_* (password-reset
+mail). Details and defaults: [`.env.example`](.env.example).
+
+Manual (non-Docker) setup is documented further below.
 
 ---
 
@@ -50,6 +95,10 @@ A full-stack, enterprise-grade web application that empowers users to create, cu
 
 ```text
 ai-resume-builder/
+├── Dockerfile               # multi-stage: frontend build -> integrated backend image
+├── docker-compose.yml       # nginx + backend + PostgreSQL, from the repo root
+├── nginx/nginx.conf.template
+├── .env.example             # only JWT_SECRET_KEY / POSTGRES_PASSWORD / an AI key are important
 ├── backend/
 │   ├── app/
 │   │   ├── api/
@@ -178,7 +227,7 @@ CREATE DATABASE ai_resume_builder;
    uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
    ```
    The backend API will be live at `http://127.0.0.1:8000`.
-   Interactive Swagger documentation is available at `http://127.0.0.1:8000/docs`.
+   Interactive Swagger documentation is available at `http://127.0.0.1:8000/api/docs`.
 
 ---
 
@@ -253,6 +302,3 @@ All 9 test units and all 12 live E2E integration workflows pass with 100% succes
 ### 4. PDF Generation Failure
 - The PDF export uses ReportLab, which requires no external OS libraries or GTK/WebKit dependencies.
 - Ensure `reportlab` is installed in your Python environment: `pip show reportlab`.
-=======
-# Ai-resume
->>>>>>> 0064ffce67bb6808b15ad039ca68d503776c92db
